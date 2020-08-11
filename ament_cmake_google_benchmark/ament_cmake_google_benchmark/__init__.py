@@ -13,8 +13,23 @@
 # limitations under the License.
 
 import argparse
+import json
 import subprocess
 import sys
+
+
+extra_metric_exclusions = {
+  'name',
+  'run_name',
+  'run_type',
+  'repetitions',
+  'repetition_index',
+  'threads',
+  'iterations',
+  'real_time',
+  'cpu_time',
+  'time_unit',
+  }
 
 
 def main(argv=sys.argv[1:]):
@@ -26,6 +41,10 @@ def main(argv=sys.argv[1:]):
     parser.add_argument(
         'result_file_out',
         help='The path to where the common result file should be written')
+    parser.add_argument(
+        '--package-name',
+        help="The package name to be used as a prefix for the 'group' "
+             'value in benchmark result files')
     parser.add_argument(
         '--command',
         nargs='+',
@@ -43,8 +62,7 @@ def main(argv=sys.argv[1:]):
     try:
         with open(args.result_file_in, 'r') as in_file:
             with open(args.result_file_out, 'w') as out_file:
-                # TODO(cottsay): Convert the results file
-                pass
+                convert_google_benchark_to_jenkins_benchmark(in_file, out_file, args.package_name)
     except FileNotFoundError:
         if res.returncode == 0:
             print(
@@ -53,3 +71,48 @@ def main(argv=sys.argv[1:]):
             res.returncode = 1
 
     return res.returncode
+
+
+def convert_google_benchark_to_jenkins_benchmark(in_file, out_file, package_name):
+    in_data = json.load(in_file)
+    out_data = {
+        'groups': [
+            {
+                'name': package_name,
+                'tests': [],
+            },
+        ],
+    }
+    for benchmark in in_data.get('benchmarks', []):
+        out_data['groups'][0]['tests'].append({
+            'name': benchmark['name'],
+            'parameters': [
+                {
+                    'name': 'iterations',
+                    'value': benchmark['iterations'],
+                },
+            ],
+            'results': [
+                {
+                    'name': 'cpu_time',
+                    'dblValue': benchmark['cpu_time'],
+                    'unit': benchmark['time_unit'],
+                },
+                {
+                    'name': 'real_time',
+                    'dblValue': benchmark['real_time'],
+                    'unit': benchmark['time_unit'],
+                },
+            ] + [
+                {
+                    'name': extra_name,
+                    'value': benchmark[extra_name],
+                } for extra_name in set(benchmark.keys()) - extra_metric_exclusions
+            ],
+        })
+    else:
+        print(
+            'WARNING: The perfromance test results file contained no results',
+            file=sys.stderr)
+
+    json.dump(out_data, out_file)
